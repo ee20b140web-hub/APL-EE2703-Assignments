@@ -1,0 +1,193 @@
+#          Assignment_2
+#          A2_spice-part2
+#          Name: T.Pavan Kumar,
+#          Roll.no:EE20B140
+
+
+import sys
+import numpy as np
+import cmath
+
+CIRCUIT = '.circuit'
+END = '.end'
+dc = 1
+
+# defining classes(Passive element classification)
+
+class RLC:
+    def __init__(self, components):
+        self.name = components[0]
+
+        self.node1 = (components[1])
+        self.node2 = (components[2])
+        if (components[0][0] == "R"):
+            self.value = components[3]
+        elif (components[0][0] == "C"):
+            if (frequency != 0):
+                self.value = complex(0, -1 / (frequency * (components[3])))
+        elif (components[0][0] == "L"):
+            if (frequency != 0):
+                self.value = complex(0, frequency * (components[3]))
+
+ # (Active elements class)
+
+class VI:
+    def __init__(self, components):
+        self.name = components[0]
+        if (components[1] == "GND"):
+            components[1] = "0"
+        if (components[2] == "GND"):  # Defining classes for voltage and current sources
+            components[2] = "0"
+        self.node1 = int(components[1])
+        self.node2 = int(components[2])
+        self.type = components[3]
+        if (components[3] == "ac"):
+            self.value = cmath.rect(float(components[4]) / 2, float(components[5]))
+        elif (components[3] == "dc"):
+            self.value = float(components[4])
+        else:
+            self.value = float(components[3])
+
+
+Resistors = []
+Capacitors = []
+Inductors = []
+VSource = []
+CSource = []
+
+with open(sys.argv[1], "r") as f:
+    lines = f.readlines()         # Reading the netlist file
+
+    start = 1
+    end = 1
+    frequency = 0
+    for line in lines:
+        string = line.split("#")[0].split("\n")[0]
+        if (string == CIRCUIT):
+            start = lines.index(line)
+        if (string == END):
+            end = lines.index(line)
+        if (string[:3] == ".ac"):
+            frequency = 2 * (np.pi) * float(string.split()[-1])
+            if (frequency != 0):
+                dc = 0
+
+    if (start == end):
+        print("Given netlist file is invalid")
+        exit(0)
+
+    for line in lines[start + 1: end]:
+        components = line.split("#")[0].split("\n")[0].split()
+        if (components[1] == 'GND'):
+            components[1] = "0"
+        if (components[2] == 'GND'):
+            components[2] = "0"
+        components[1] = int(components[1])
+        components[2] = int(components[2])
+        # creating objects for each component
+        if (components[0][0] == "R"):
+            components[3] = float(components[3])
+            R = RLC(components)
+            Resistors.append(R)
+        elif (components[0][0] == "C"):
+            components[3] = float(components[3])
+            C = RLC(components)
+            Capacitors.append(C)
+        elif (components[0][0] == "L"):
+            components[3] = float(components[3])
+            L = RLC(components)
+            Inductors.append(L)
+        elif (components[0][0] == "V"):
+            V = VI(components)
+            VSource.append(V)
+        elif (components[0][0] == "I"):
+            I = VI(components)
+            CSource.append(I)
+
+k = len(VSource)  # k = no. of voltage sources = no. of current variables
+                  # n = no. of nodes
+temp = {}
+n = 0
+if (dc == 1):
+    temp = {}
+    for x in Inductors:
+        if (x.node1 > x.node2):
+            temp[x.node1] = x.node2
+        else:  # Inductors in case of DC(frequency = 0) equate the node voltages it is connected across
+            temp[x.node2] = x.node1  # Capacitors in case of DC(frequency = 0) are replaced
+    for x in Resistors:
+        if (x.node1 in temp.keys()):
+            x.node1 = temp[x.node1]
+        if (x.node2 in temp.keys()):
+            x.node2 = temp[x.node2]
+
+        if (x.node1 > n):
+            n = x.node1
+        if (x.node2 > n):
+            n = x.node2
+
+    M = np.zeros((n + k + 1, n + k + 1))
+    b = np.zeros(n + k + 1)
+
+    for x in Resistors:
+        M[x.node1, x.node1] += 1 / x.value
+        M[x.node1, x.node2] += -1 / x.value
+        M[x.node2, x.node1] += -1 / x.value
+        M[x.node2, x.node2] += 1 / x.value
+else:
+    for y in [Resistors, Capacitors, Inductors, VSource, CSource]:
+        for x in y:
+            if (x.node1 > n):
+                n = x.node1  # In case of AC, circuit is solved with complex numbers
+            if (x.node2 > n):
+                n = x.node2
+
+    M = np.zeros((n + k + 1, n + k + 1), dtype=complex)
+    b = np.zeros(n + k + 1, dtype=complex)
+
+    for y in [Resistors, Inductors, Capacitors]:
+        for x in y:
+            M[x.node1, x.node1] += 1 / x.value
+            M[x.node1, x.node2] += -1 / x.value
+            M[x.node2, x.node1] += -1 / x.value
+            M[x.node2, x.node2] += 1 / x.value
+
+i = 1
+VSource.sort(key=lambda x: int(x.name[1]))
+
+for x in VSource:
+    M[x.node1, n + i] += 1
+    M[x.node2, n + i] += -1
+    M[n + i, x.node1] += 1
+    M[n + i, x.node2] += -1
+    b[n + i] += x.value
+    i = i + 1
+
+for x in CSource:
+    b[x.node1] += x.value
+    b[x.node2] += -x.value
+
+try:
+    x = np.linalg.solve(M[1:, 1:], b[1:])
+except:
+    print("It has Infinite solutions")
+    exit()
+
+sln = {"V0": 0}
+p = 1
+for i in x:
+    if (p < n + 1):
+        sln["V" + str(p)] = i
+        p = p + 1
+    else:
+        sln["I" + str(p - n)] = -i
+        p = p + 1
+for x in temp.keys():
+    sln["V" + str(x)] = "V" + str(temp[x])
+
+print(M, end='\n\n')
+print(b, end ='\n\n')
+
+ # printing unknown variables in dictionary
+for unknown in sln.items():
+    print(unknown)
